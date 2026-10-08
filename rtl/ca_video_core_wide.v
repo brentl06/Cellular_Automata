@@ -12,8 +12,11 @@
 //   clock domain and no clock-domain-crossing logic.
 //
 // DISPLAY
-//   Each pixel lasts CE_DIV cycles, so the display's BRAM read (MEM_LAT
-//   cycles, which must be < CE_DIV) always settles within the same pixel.
+//   Each pixel lasts CE_DIV cycles. The display address is registered (one
+//   cycle) and the BRAM read takes MEM_LAT more, so it settles within the
+//   same pixel as long as CE_DIV > MEM_LAT + 1. Registering the address took
+//   the v_count -> multiply -> BRAM ADDRB path (the post-route critical path
+//   at 100 MHz) off the critical path.
 //   Syncs, active, and color are all registered together on the pixel strobe,
 //   so they stay aligned (the whole picture is delayed by one pixel).
 //   The buffer shown is latched at the start of each frame (disp_sel), and a
@@ -40,7 +43,7 @@
 //
 // CONSTRAINTS
 //   P a power of 2, 2..32, dividing WIDTH. WIN_X0 and WIN_W multiples of P.
-//   BLOCK a power of 2. CE_DIV >= 2 and CE_DIV > MEM_LAT. MEM_LAT = 1 or 2.
+//   BLOCK a power of 2. CE_DIV > MEM_LAT + 1. MEM_LAT = 1 or 2.
 //   One generation must finish within one frame (true by a wide margin at
 //   640x480: ~10,600 cycles against ~1.68M per frame).
 // ============================================================================
@@ -229,7 +232,20 @@ module ca_video_core_wide #(
     // ------------------------------------------------------------------
     wire [9:0]        cell_x    = pixel_x >> BLOCK_SHIFT;
     wire [9:0]        cell_y    = pixel_y >> BLOCK_SHIFT;
-    wire [ADDR_W-1:0] disp_addr = cell_y * WORDS + cell_x / P;
+    wire [ADDR_W-1:0] disp_addr_c = cell_y * WORDS + cell_x / P;
+
+    // registered: the address reaches the BRAM one cycle after the pixel
+    // counters change, leaving the multiply its own clock cycle
+    reg  [ADDR_W-1:0] disp_addr;
+    always @(posedge clk) disp_addr <= disp_addr_c;
+
+`ifndef SYNTHESIS
+    initial if (CE_DIV <= MEM_LAT + 1) begin
+        $display("ca_video_core_wide: CE_DIV (%0d) must be > MEM_LAT + 1 (%0d)",
+                 CE_DIV, MEM_LAT + 1);
+        $finish;
+    end
+`endif
 
     ca_double_buffer_wide #(
         .WIDTH(WIDTH), .HEIGHT(HEIGHT), .P(P), .MEM_LAT(MEM_LAT), .N_GENS(1)
@@ -255,8 +271,9 @@ module ca_video_core_wide #(
     // ------------------------------------------------------------------
     // display: latch which buffer to show at the start of each frame, then
     // register syncs, active and color together on the pixel strobe.
-    // disp_addr is stable for the whole pixel, so by the strobe the
-    // MEM_LAT-cycle read has settled.
+    // disp_addr is registered one cycle after the pixel counters change, and
+    // the read takes MEM_LAT more; CE_DIV > MEM_LAT + 1 means it has settled
+    // by the next strobe.
     // ------------------------------------------------------------------
     always @(posedge clk) begin
         if (rst)             disp_sel <= 1'b0;
