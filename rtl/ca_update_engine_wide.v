@@ -28,14 +28,17 @@
 //   (~9% at 640 wide with P=32, versus ~0.3% for the 1-lane engine).
 //
 // LATENCY
+//   scan counters at cycle t   ->  rd_addr (registered) at t + 1
 //   rd_addr issued at cycle t  ->  word on rd_data at t + MEM_LAT
 //   one padded row of line buffer  +PWORDS  (row above / row below alignment)
 //   prev/cur/next word registers   +2       (center = the "cur" word)
-//   => LAT = PWORDS + 2 + MEM_LAT cycles from issuing an address to that word
-//      being the center of the window.
-//   MEM_LAT = 1 matches a plain synchronous BRAM read (identical to the 1-lane
-//   engine's ROWLEN + 3). Set MEM_LAT = 2 when the BRAM output register is
-//   enabled for higher Fmax -- the whole point of making it a parameter is
+//   => LAT = PWORDS + 2 + 1 + MEM_LAT cycles from the scan counters to that
+//      word being the center of the window.
+//   The read address is registered because counters -> wrap muxes ->
+//   row*WORDS + word -> port-A muxes -> 16 BRAMs was the post-route critical
+//   path at 100 MHz (8 logic levels, WNS +0.548 ns).
+//   MEM_LAT = 1 matches a plain synchronous BRAM read. Set MEM_LAT = 2 when
+//   the BRAM output register is enabled for higher Fmax -- the whole point of making it a parameter is
 //   that forgetting to account for that extra cycle is exactly the bug this
 //   project already hit once (TOTAL_LATENCY off by one).
 //
@@ -72,7 +75,7 @@ module ca_update_engine_wide #(
     output reg               busy,
     output reg               done,      // 1-cycle pulse with the final write
 
-    output wire [ADDR_W-1:0] rd_addr,   // word address into the current buffer
+    output reg  [ADDR_W-1:0] rd_addr,   // word address into the current buffer (registered)
     input  wire [P-1:0]      rd_data,   // arrives MEM_LAT cycles after rd_addr
 
     output reg  [ADDR_W-1:0] wr_addr,   // word address into the next buffer
@@ -86,7 +89,7 @@ module ca_update_engine_wide #(
     localparam PROW_W = $clog2(NROWS);
     localparam ROW_W  = (HEIGHT > 1) ? $clog2(HEIGHT) : 1;
     localparam WORD_W = (WORDS  > 1) ? $clog2(WORDS)  : 1;
-    localparam integer LAT = PWORDS + 2 + MEM_LAT;
+    localparam integer LAT = PWORDS + 2 + 1 + MEM_LAT;   // +1: registered rd_addr
 
     // ------------------------------------------------------------------
     // input scan: padded (row, word) counters -> read address
@@ -103,7 +106,7 @@ module ca_update_engine_wide #(
                                     (pw == PWORDS-1)  ? 0          :
                                                         (pw - 1'b1);
 
-    assign rd_addr = actual_row * WORDS + actual_word;
+    always @(posedge clk) rd_addr <= actual_row * WORDS + actual_word;
 
     always @(posedge clk) begin
         if (rst) begin
