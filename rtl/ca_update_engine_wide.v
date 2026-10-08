@@ -246,8 +246,16 @@ module ca_update_engine_wide #(
             done    <= 1'b0;
         end else begin
             wr_en   <= out_valid;
-            wr_addr <= out_row * WORDS + out_word;
-            wr_data <= next_word;
+            // Only move wr_addr on real writes. When idle, (prow_p, pw_p)
+            // sit at 0, so out_row/out_word wrap to all-ones and form an
+            // address past the end of memory. Nothing gets written (wr_en is
+            // low), but a memory that reads its write address -- like a
+            // BRAM port A in ca_double_buffer_wide -- would still be read
+            // out of bounds. Holding the last valid address avoids that.
+            if (out_valid) begin
+                wr_addr <= out_row * WORDS + out_word;
+                wr_data <= next_word;
+            end
             done    <= out_valid && (out_row == HEIGHT-1) && (out_word == WORDS-1);
         end
     end
