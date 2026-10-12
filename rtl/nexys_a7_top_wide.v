@@ -4,10 +4,13 @@
 // Top level for the 32-lane design on the Nexys A7-100T.
 //
 // CLOCKING
-//   Runs directly on the board's 100 MHz oscillator -- no Clocking Wizard.
-//   The video core derives 25 MHz pixels internally with a clock enable
-//   (one pixel every 4 cycles), which VGA monitors accept for 640x480@60.
-//   The engine runs at the full 100 MHz.
+//   The 100 MHz oscillator feeds an MMCM (clk_gen.v) that produces the one
+//   system clock, CLK_HZ = 100 MHz * CLK_MULT / CLK_DIV (default 150 MHz).
+//   Everything runs on it -- still a single clock domain. The video core
+//   derives 25 MHz pixels with a clock enable every CE_DIV = CLK_HZ / 25 MHz
+//   cycles (6 at 150 MHz), which VGA monitors accept for 640x480@60, so
+//   CLK_HZ must be a multiple of 25 MHz. The design is held in reset until
+//   the MMCM locks.
 //
 // CONTROLS
 //   SW[3:0]    rule preset (same 16 presets as before)
@@ -28,7 +31,9 @@
 // ============================================================================
 
 module nexys_a7_top_wide #(
-    parameter SEG_SCAN_BITS = 17      // 7-seg digit period 2^17 cycles (lowered in simulation)
+    parameter SEG_SCAN_BITS = 17,     // 7-seg digit period 2^17 cycles (lowered in simulation)
+    parameter CLK_MULT      = 9,      // system clock = 100 MHz * CLK_MULT / CLK_DIV
+    parameter CLK_DIV       = 6       // (9/6 -> 150 MHz; 10/5 -> 200; 10/10 -> 100)
 ) (
     input  wire       CLK100MHZ,
     input  wire       CPU_RESETN,     // active low
@@ -46,16 +51,36 @@ module nexys_a7_top_wide #(
     output wire [7:0] AN
 );
 
-    wire clk = CLK100MHZ;
+    localparam integer CLK_HZ = (100_000_000 * CLK_MULT) / CLK_DIV;
+    localparam integer CE_DIV = CLK_HZ / 25_000_000;
+
+`ifndef SYNTHESIS
+    initial if (CLK_HZ % 25_000_000 != 0) begin
+        $display("nexys_a7_top_wide: CLK_HZ %0d is not a multiple of 25 MHz", CLK_HZ);
+        $finish;
+    end
+`endif
 
     // ------------------------------------------------------------------
-    // reset: power-on reset plus the synchronized CPU_RESET button
+    // clock: MMCM, 100 MHz in -> CLK_HZ out
+    // ------------------------------------------------------------------
+    wire clk, mmcm_locked;
+
+    clk_gen #(.MULT(CLK_MULT), .DIV(CLK_DIV)) clkgen (
+        .clk_in  (CLK100MHZ),
+        .clk_out (clk),
+        .locked  (mmcm_locked)
+    );
+
+    // ------------------------------------------------------------------
+    // reset: power-on reset, the CPU_RESET button, and MMCM not yet locked,
+    // all synchronized to clk
     // ------------------------------------------------------------------
     reg [3:0] por = 4'hF;
     reg [1:0] rst_sync = 2'b11;
     always @(posedge clk) begin
         por      <= {por[2:0], 1'b0};
-        rst_sync <= {rst_sync[0], ~CPU_RESETN};
+        rst_sync <= {rst_sync[0], ~CPU_RESETN | ~mmcm_locked};
     end
     wire rst = por[3] | rst_sync[1];
 
@@ -107,8 +132,8 @@ module nexys_a7_top_wide #(
         .HEIGHT  (480),
         .P       (32),
         .MEM_LAT (2),
-        .CE_DIV  (4),
-        .CLK_HZ  (100_000_000),
+        .CE_DIV  (CE_DIV),
+        .CLK_HZ  (CLK_HZ),
         .BAUD    (460800)
     ) core (
         .clk              (clk),
