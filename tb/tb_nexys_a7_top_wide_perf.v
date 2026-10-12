@@ -7,7 +7,7 @@
 // interval timed by the testbench. Also prints cells/clock.
 //
 //   iverilog -g2012 -o sim_top_perf tb_nexys_a7_top_wide_perf.v nexys_a7_top_wide.v \
-//       gen_cycle_display.v ca_video_core_wide.v ca_double_buffer_wide.v \
+//       gen_cycle_display.v clk_gen.v ca_video_core_wide.v ca_double_buffer_wide.v \
 //       ca_update_engine_wide.v vga_timing_ce.v uart_tx.v && vvp sim_top_perf
 // ============================================================================
 `timescale 1ns/1ps
@@ -90,7 +90,7 @@ module tb_nexys_a7_top_wide_perf;
     end
 
     initial begin
-        #(40_000_000);   // 4M cycles
+        #(200_000_000);  // 20M cycles: two frames even at CE_DIV 8
         $display("TIMEOUT"); $finish;
     end
 
