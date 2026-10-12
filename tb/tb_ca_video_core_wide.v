@@ -364,10 +364,27 @@ module tb_ca_video_core_wide;
         .WX(4), .WY(1), .WW(8), .WH(3), .DIV(8), .SEED(1640531527)
     ) cfg_b (clk, fb, eb);
 
+    // board-like at 150 MHz: 32 lanes would be slow here, so 8 lanes,
+    // MEM_LAT=2, six clocks per pixel (CE_DIV=6)
+    wire        fc, fd;
+    wire [31:0] ec, ed;
+    ca_video_checker #(
+        .W(32), .H(8), .P(8), .ML(2), .BLK(1), .CED(6),
+        .HA(32), .HF(2), .HS(4), .HB(2), .VA(8), .VF(1), .VS(1), .VB(2),
+        .WX(8), .WY(2), .WW(16), .WH(4), .DIV(12), .SEED(1013904223)
+    ) cfg_c (clk, fc, ec);
+
+    // tightest legal timing: CE_DIV = MEM_LAT + 2
+    ca_video_checker #(
+        .W(32), .H(4), .P(16), .ML(1), .BLK(1), .CED(3),
+        .HA(32), .HF(1), .HS(3), .HB(2), .VA(4), .VF(1), .VS(1), .VB(1),
+        .WX(16), .WY(1), .WW(16), .WH(2), .DIV(6), .SEED(123456789)
+    ) cfg_d (clk, fd, ed);
+
     initial begin
-        wait (fa && fb);
-        if (ea + eb == 0) $display("ALL CONFIGURATIONS PASSED");
-        else              $display("FAILED: %0d total errors", ea + eb);
+        wait (fa && fb && fc && fd);
+        if (ea + eb + ec + ed == 0) $display("ALL CONFIGURATIONS PASSED");
+        else                        $display("FAILED: %0d total errors", ea + eb + ec + ed);
         $finish;
     end
 

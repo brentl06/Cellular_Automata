@@ -280,7 +280,15 @@ module ca_video_core_wide #(
         else if (frame_tick) disp_sel <= cur_buf;
     end
 
-    wire disp_bit = disp_word[cell_x % P];
+    // The bit index is registered: it only changes when the pixel counters
+    // do, so it is settled one cycle later -- long before the data arrives
+    // (CE_DIV > MEM_LAT + 1) -- and h_count no longer feeds the 32:1 bit-select
+    // mux combinationally (the post-route critical path once both BRAM
+    // addresses were registered, WNS +1.699 ns at 100 MHz).
+    localparam BS_W = (P > 1) ? $clog2(P) : 1;
+    reg  [BS_W-1:0] disp_bitsel;
+    always @(posedge clk) disp_bitsel <= cell_x % P;
+    wire disp_bit = disp_word[disp_bitsel];
 
     reg hs_q, vs_q, act_q, pix_q;
     always @(posedge clk) begin
@@ -313,21 +321,30 @@ module ca_video_core_wide #(
     reg [WW_W-1:0] sw;                  // word within that row
     wire           issue = snap_active && (si < WIN_WORDS);
 
-    assign aux_sel  = snap_active;
-    assign aux_addr = (WIN_Y0 + sr) * WORDS + WX0W + sw;
+    // The address is registered (the same row*WORDS-into-16-BRAMs path as
+    // the engine and display reads; it was the worst path at 150 MHz,
+    // WNS -0.420 ns), so a word issued now returns SNAP_LAT = MEM_LAT + 1
+    // cycles later. snap_active stays high until the last word is back, so
+    // aux_sel still covers the delayed address.
+    localparam SNAP_LAT = MEM_LAT + 1;
+    reg [ADDR_W-1:0] aux_addr_q;
+    always @(posedge clk) aux_addr_q <= (WIN_Y0 + sr) * WORDS + WX0W + sw;
 
-    // read pipeline: an address issued now returns MEM_LAT cycles later
-    reg [MEM_LAT-1:0] pv;
-    reg [SI_W-1:0]    pidx [0:MEM_LAT-1];
+    assign aux_sel  = snap_active;
+    assign aux_addr = aux_addr_q;
+
+    // read pipeline: tracks which issued word is returning
+    reg [SNAP_LAT-1:0] pv;
+    reg [SI_W-1:0]     pidx [0:SNAP_LAT-1];
     reg [P-1:0]       snap [0:WIN_WORDS-1];
     integer ka, kb;                     // one loop variable per always block
 
     always @(posedge clk) begin
         pidx[0] <= si;
-        for (ka = 1; ka < MEM_LAT; ka = ka + 1)
+        for (ka = 1; ka < SNAP_LAT; ka = ka + 1)
             pidx[ka] <= pidx[ka-1];
-        if (pv[MEM_LAT-1])
-            snap[pidx[MEM_LAT-1]] <= cur_word;
+        if (pv[SNAP_LAT-1])
+            snap[pidx[SNAP_LAT-1]] <= cur_word;
     end
 
     reg [CI_W-1:0] ci;                  // cell being streamed
@@ -351,7 +368,7 @@ module ca_video_core_wide #(
             uart_valid <= 1'b0;
 
             pv[0] <= issue;
-            for (kb = 1; kb < MEM_LAT; kb = kb + 1)
+            for (kb = 1; kb < SNAP_LAT; kb = kb + 1)
                 pv[kb] <= pv[kb-1];
 
             case (ust)
@@ -373,7 +390,7 @@ module ca_video_core_wide #(
                             sw <= sw + 1'b1;
                         end
                     end
-                    if (pv[MEM_LAT-1] && pidx[MEM_LAT-1] == WIN_WORDS-1) begin
+                    if (pv[SNAP_LAT-1] && pidx[SNAP_LAT-1] == WIN_WORDS-1) begin
                         ust <= U_SEND;               // last word captured
                         ci  <= 0;
                     end
