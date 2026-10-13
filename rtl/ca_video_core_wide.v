@@ -60,6 +60,7 @@ module ca_video_core_wide #(
     parameter V_ACTIVE = 480, V_FRONT = 10, V_SYNC = 2,  V_BACK = 33,
 
     parameter FRAMES_PER_GEN = 1,
+    parameter STAGES         = 0,   // 0: one generation per pass (torus); K: K per pass (dead top/bottom)
 
     parameter WIN_X0 = 288,       // UART window: centered 64x48 by default
     parameter WIN_Y0 = 216,
@@ -248,7 +249,8 @@ module ca_video_core_wide #(
 `endif
 
     ca_double_buffer_wide #(
-        .WIDTH(WIDTH), .HEIGHT(HEIGHT), .P(P), .MEM_LAT(MEM_LAT), .N_GENS(1)
+        .WIDTH(WIDTH), .HEIGHT(HEIGHT), .P(P), .MEM_LAT(MEM_LAT), .N_GENS(1),
+        .STAGES(STAGES)
     ) statebuf (
         .clk       (clk),
         .rst       (rst),

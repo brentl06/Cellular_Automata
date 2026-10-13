@@ -8,11 +8,14 @@
 //
 //   iverilog -g2012 -o sim_top_perf tb_nexys_a7_top_wide_perf.v nexys_a7_top_wide.v \
 //       gen_cycle_display.v clk_gen.v ca_video_core_wide.v ca_double_buffer_wide.v \
-//       ca_update_engine_wide.v vga_timing_ce.v uart_tx.v && vvp sim_top_perf
+//       ca_update_engine_wide.v ca_pipeline_engine.v ca_stage.v vga_timing_ce.v uart_tx.v \
+//       && vvp sim_top_perf          (add -Ptb_nexys_a7_top_wide_perf.TB_STAGES=4 for a fast run)
 // ============================================================================
 `timescale 1ns/1ps
 
-module tb_nexys_a7_top_wide_perf;
+module tb_nexys_a7_top_wide_perf #(
+    parameter TB_STAGES = 32      // pipeline stages (the board default); smaller runs faster
+);
 
     localparam SCAN_BITS = 2;
     localparam GENS      = 2;
@@ -24,7 +27,7 @@ module tb_nexys_a7_top_wide_perf;
     wire hs, vs, txd, ca, cb, cc, cd, ce, cf, cg, dp;
     wire [7:0] an;
 
-    nexys_a7_top_wide #(.SEG_SCAN_BITS(SCAN_BITS)) dut (
+    nexys_a7_top_wide #(.SEG_SCAN_BITS(SCAN_BITS), .STAGES(TB_STAGES)) dut (
         .CLK100MHZ(clk), .CPU_RESETN(1'b1), .SW(4'd0), .SW15(1'b0),
         .VGA_R(r), .VGA_G(g), .VGA_B(b), .VGA_HS(hs), .VGA_VS(vs),
         .UART_RXD_OUT(txd),
@@ -81,8 +84,9 @@ module tb_nexys_a7_top_wide_perf;
                 $display("FAIL gen %0d: display %0d, start->done %0d", gen, shown, expect_c);
                 errors = errors + 1;
             end else
-                $display("ok   gen %0d: %0d cycles, %.2f cells/clock", gen, shown,
-                         307200.0 / shown);
+                $display("ok   pass %0d: %0d cycles, %0d generations/pass, %.1f cells/clock", gen, shown,
+                         (dut.STAGES > 0) ? dut.STAGES : 1,
+                         ((dut.STAGES > 0) ? dut.STAGES : 1) * 307200.0 / shown);
         end
         if (errors == 0) $display("ALL TESTS PASSED");
         else             $display("%0d TESTS FAILED", errors);

@@ -19,10 +19,16 @@
 //              per frame, UART streams whichever generation it can
 //   CPU_RESET  reboot with a new random pattern
 //
+// ENGINE
+//   STAGES > 0 uses the temporal pipeline (ca_pipeline_engine.v): each pass
+//   through memory computes STAGES generations, with dead top/bottom edges
+//   and horizontal wraparound, and the display shows every STAGES-th
+//   generation. STAGES = 0 is the original one-generation engine (torus).
+//
 // 7-SEGMENT DISPLAY
-//   Clock cycles taken by the most recent generation, in decimal (measured
-//   on the board from the engine's start pulse to its done pulse). Cells per
-//   clock = 307200 / shown value.
+//   Clock cycles taken by the most recent pass, in decimal (measured on the
+//   board from the engine's start pulse to its done pulse). Cells per clock =
+//   max(STAGES,1) * 307200 / shown value.
 //
 // UART
 //   460800 baud, 8N1, the same PuTTY setting as before. Streams the 64x48
@@ -33,7 +39,8 @@
 module nexys_a7_top_wide #(
     parameter SEG_SCAN_BITS = 17,     // 7-seg digit period 2^17 cycles (lowered in simulation)
     parameter CLK_MULT      = 9,      // system clock = 100 MHz * CLK_MULT / CLK_DIV
-    parameter CLK_DIV       = 6       // (9/6 -> 150 MHz; 10/5 -> 200; 10/10 -> 100)
+    parameter CLK_DIV       = 6,      // (9/6 -> 150 MHz; 10/5 -> 200; 10/10 -> 100)
+    parameter STAGES        = 32      // generations per memory pass (0 = original torus engine)
 ) (
     input  wire       CLK100MHZ,
     input  wire       CPU_RESETN,     // active low
@@ -133,6 +140,7 @@ module nexys_a7_top_wide #(
         .P       (32),
         .MEM_LAT (2),
         .CE_DIV  (CE_DIV),
+        .STAGES  (STAGES),
         .CLK_HZ  (CLK_HZ),
         .BAUD    (460800)
     ) core (
