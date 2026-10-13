@@ -33,6 +33,8 @@ module ca_double_buffer_wide #(
     parameter P       = 32,
     parameter MEM_LAT = 2,        // 1 or 2
     parameter N_GENS  = 1,
+    parameter STAGES  = 0,        // 0: ca_update_engine_wide (1 generation/pass, torus)
+                                  // K>0: ca_pipeline_engine (K generations/pass, dead top/bottom)
 
     localparam WORDS  = WIDTH / P,
     localparam NWORD  = HEIGHT * WORDS,
@@ -76,19 +78,38 @@ module ca_double_buffer_wide #(
     wire [P-1:0]      e_wr_data;
     wire              e_wr_en;
 
-    ca_update_engine_wide #(.WIDTH(WIDTH), .HEIGHT(HEIGHT), .P(P), .MEM_LAT(MEM_LAT)) engine (
-        .clk     (clk),
-        .rst     (rst),
-        .start   (engine_start),
-        .rule    (rule),
-        .busy    (engine_busy),
-        .done    (engine_done),
-        .rd_addr (e_rd_addr),
-        .rd_data (cur_word),
-        .wr_addr (e_wr_addr),
-        .wr_data (e_wr_data),
-        .wr_en   (e_wr_en)
-    );
+    generate
+        if (STAGES == 0) begin : g_single
+            ca_update_engine_wide #(.WIDTH(WIDTH), .HEIGHT(HEIGHT), .P(P), .MEM_LAT(MEM_LAT)) engine (
+                .clk     (clk),
+                .rst     (rst),
+                .start   (engine_start),
+                .rule    (rule),
+                .busy    (engine_busy),
+                .done    (engine_done),
+                .rd_addr (e_rd_addr),
+                .rd_data (cur_word),
+                .wr_addr (e_wr_addr),
+                .wr_data (e_wr_data),
+                .wr_en   (e_wr_en)
+            );
+        end else begin : g_pipe
+            ca_pipeline_engine #(.WIDTH(WIDTH), .HEIGHT(HEIGHT), .P(P), .MEM_LAT(MEM_LAT),
+                                 .STAGES(STAGES)) engine (
+                .clk     (clk),
+                .rst     (rst),
+                .start   (engine_start),
+                .rule    (rule),
+                .busy    (engine_busy),
+                .done    (engine_done),
+                .rd_addr (e_rd_addr),
+                .rd_data (cur_word),
+                .wr_addr (e_wr_addr),
+                .wr_data (e_wr_data),
+                .wr_en   (e_wr_en)
+            );
+        end
+    endgenerate
 
     // read address for the current buffer: engine, or aux while idle
     wire [ADDR_W-1:0] rd_addr = aux_sel ? aux_addr : e_rd_addr;

@@ -38,7 +38,9 @@ module ca_video_checker #(
     parameter DIV = 8,
     parameter SEED  = 305419896,
     parameter NCAP  = 5,           // UART lines to check in capture mode
-    parameter NFREE = 10           // frames to check after capture is switched off
+    parameter NFREE = 10,          // frames to check after capture is switched off
+    parameter STG   = 0            // engine STAGES: 0 = 1 torus generation per pass,
+                                   // K = K generations per pass with dead top/bottom edges
 ) (
     input  wire        clk,
     output reg         finished,
@@ -68,7 +70,7 @@ module ca_video_checker #(
         .H_ACTIVE(HA), .H_FRONT(HF), .H_SYNC(HS), .H_BACK(HB),
         .V_ACTIVE(VA), .V_FRONT(VF), .V_SYNC(VS), .V_BACK(VB),
         .WIN_X0(WX), .WIN_Y0(WY), .WIN_W(WW), .WIN_H(WH),
-        .CLK_HZ(DIV), .BAUD(1), .SEED(SEED)
+        .CLK_HZ(DIV), .BAUD(1), .SEED(SEED), .STAGES(STG)
     ) dut (
         .clk              (clk),
         .rst              (rst),
@@ -113,22 +115,38 @@ module ca_video_checker #(
         end
     endtask
 
-    task automatic need(input integer g);          // compute up to generation g
-        integer rr, c, dr, dc, s, base, nb;
+    // One engine pass. STG = 0: one generation on a torus. STG = K: K
+    // generations with dead top/bottom edges (rows outside 0..H-1 read as 0)
+    // and horizontal wraparound.
+    reg wk_a [0:NCELL-1];
+    reg wk_b [0:NCELL-1];
+
+    task automatic need(input integer g);          // compute up to pass g
+        integer rr, c, dr, dc, s, base, nb, k, nsteps, ry;
         begin
+            nsteps = (STG == 0) ? 1 : STG;
             while (ref_count <= g && ref_count < MAXG) begin
                 base = (ref_count - 1) * NCELL;
                 nb   = ref_count * NCELL;
-                for (rr = 0; rr < H; rr = rr + 1)
-                    for (c = 0; c < W; c = c + 1) begin
-                        s = 0;
-                        for (dr = -1; dr <= 1; dr = dr + 1)
-                            for (dc = -1; dc <= 1; dc = dc + 1)
-                                if (dr != 0 || dc != 0)
-                                    s = s + ref_hist[base + ((rr+dr+H)%H)*W + ((c+dc+W)%W)];
-                        ref_hist[nb + rr*W + c] = ref_hist[base + rr*W + c] ? cur_rule[9+s]
-                                                                             : cur_rule[s];
-                    end
+                for (k = 0; k < NCELL; k = k + 1) wk_a[k] = ref_hist[base + k];
+                for (k = 0; k < nsteps; k = k + 1) begin
+                    for (rr = 0; rr < H; rr = rr + 1)
+                        for (c = 0; c < W; c = c + 1) begin
+                            s = 0;
+                            for (dr = -1; dr <= 1; dr = dr + 1)
+                                for (dc = -1; dc <= 1; dc = dc + 1)
+                                    if (dr != 0 || dc != 0) begin
+                                        ry = rr + dr;
+                                        if (STG == 0)
+                                            s = s + wk_a[((ry+H)%H)*W + ((c+dc+W)%W)];
+                                        else if (ry >= 0 && ry < H)
+                                            s = s + wk_a[ry*W + ((c+dc+W)%W)];
+                                    end
+                            wk_b[rr*W + c] = wk_a[rr*W + c] ? cur_rule[9+s] : cur_rule[s];
+                        end
+                    for (rr = 0; rr < NCELL; rr = rr + 1) wk_a[rr] = wk_b[rr];
+                end
+                for (k = 0; k < NCELL; k = k + 1) ref_hist[nb + k] = wk_a[k];
                 ref_count = ref_count + 1;
             end
         end
@@ -334,8 +352,8 @@ module ca_video_checker #(
             errors = errors + run_err;
         end
 
-        $display("W=%0d H=%0d P=%0d MEM_LAT=%0d BLOCK=%0d: %s (%0d errors)",
-                 W, H, P, ML, BLK, (errors == 0) ? "PASS" : "FAIL", errors);
+        $display("W=%0d H=%0d P=%0d MEM_LAT=%0d BLOCK=%0d STAGES=%0d: %s (%0d errors)",
+                 W, H, P, ML, BLK, STG, (errors == 0) ? "PASS" : "FAIL", errors);
         finished = 1'b1;
     end
 
@@ -381,10 +399,26 @@ module tb_ca_video_core_wide;
         .WX(16), .WY(1), .WW(16), .WH(2), .DIV(6), .SEED(123456789)
     ) cfg_d (clk, fd, ed);
 
+    // temporal pipeline: 3 generations per pass (8 lanes, MEM_LAT=2, CE_DIV=6),
+    // and 2 per pass at the tightest legal pixel timing
+    wire        fe, ff;
+    wire [31:0] ee, ef;
+    ca_video_checker #(
+        .W(32), .H(8), .P(8), .ML(2), .BLK(1), .CED(6),
+        .HA(32), .HF(2), .HS(4), .HB(2), .VA(8), .VF(1), .VS(1), .VB(2),
+        .WX(8), .WY(2), .WW(16), .WH(4), .DIV(12), .SEED(42424242), .STG(3)
+    ) cfg_e (clk, fe, ee);
+
+    ca_video_checker #(
+        .W(32), .H(4), .P(16), .ML(1), .BLK(1), .CED(3),
+        .HA(32), .HF(1), .HS(3), .HB(2), .VA(4), .VF(1), .VS(1), .VB(1),
+        .WX(16), .WY(1), .WW(16), .WH(2), .DIV(6), .SEED(987654321), .STG(2)
+    ) cfg_f (clk, ff, ef);
+
     initial begin
-        wait (fa && fb && fc && fd);
-        if (ea + eb + ec + ed == 0) $display("ALL CONFIGURATIONS PASSED");
-        else                        $display("FAILED: %0d total errors", ea + eb + ec + ed);
+        wait (fa && fb && fc && fd && fe && ff);
+        if (ea + eb + ec + ed + ee + ef == 0) $display("ALL CONFIGURATIONS PASSED");
+        else $display("FAILED: %0d total errors", ea + eb + ec + ed + ee + ef);
         $finish;
     end
 
