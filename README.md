@@ -1,19 +1,19 @@
 <img width="480" height="360" alt="ca_hw" src="https://github.com/user-attachments/assets/7ae974d1-286b-412b-9ddf-b86b3fabcce6" />
 
 # Cellular_Automata
-This is a cellular automaton accelerator written entirely in Verilog for the Artix-7 FPGA on the Nexys A7 board. A 32-lane streaming datapath updates 32 cells per clock cycle on a 640x480 grid at 100 MHz: line buffers rebuild a 3x3 sliding window each clock, and each cell's neighbor-count sum indexes an 18-bit birth/survival rule, so 16 different cellular automata are selectable at runtime from the board switches. The grid is shown live over VGA (one generation per frame, no tearing) and a 64x48 window can be streamed over UART to make GIFs.
+This is a cellular automaton accelerator written entirely in Verilog for the Artix-7 FPGA on the Nexys A7 board. A 32-lane streaming datapath updates 32 cells per clock cycle on a 640x480 grid at 150 MHz: line buffers rebuild a 3x3 sliding window each clock, and each cell's neighbor-count sum indexes an 18-bit birth/survival rule, so 16 different cellular automata are selectable at runtime from the board switches. The grid is shown live over VGA (one generation per frame, no tearing) and a 64x48 window can be streamed over UART to make GIFs.
 
 ## Results
 
 | | |
 |---|---|
-| Throughput, measured on hardware | **10,612 cycles per 640x480 generation** (28.95 cells/clock, ~2.9 billion cells/s at 100 MHz) |
+| Throughput, measured on hardware | **10,613 cycles per 640x480 generation** at 150 MHz (28.95 cells/clock, ~4.3 billion cells/s) |
 | How it was measured | an on-board counter times each generation and shows it on the 7-segment display; it matches the cycle-accurate simulation exactly |
-| Timing | met at 100 MHz (post-route WNS +0.613 ns) |
-| Resources | 1,106 LUTs (1.7% of the device), 735 FFs, 32.5 BRAM tiles (the two 640x480 state buffers) |
-| VGA output | confirmed on a monitor |
+| Clock and timing | 150 MHz from an on-chip MMCM (board oscillator is 100 MHz); timing met post-route (WNS +0.437 ns) |
+| Resources | 1,106 LUTs (1.7% of the device), 735 FFs, 32.5 BRAM tiles (the two 640x480 state buffers); measured on the earlier 100 MHz build |
+| VGA output | confirmed on a monitor with the 100 MHz build; not yet re-checked at 150 MHz |
 
-**CPU comparison.** A bit-packed, multithreaded C implementation (same runtime-selectable rule) reaches 13.3 billion cells/s on one core and 60.6 billion on six cores of an Apple M3 Pro, so the current FPGA design is not faster than a well-optimized CPU. The FPGA design is limited by memory bandwidth (one word in and out of BRAM per clock) while using 1.7% of the LUTs; the next step below targets that.
+**CPU comparison.** A bit-packed, multithreaded C implementation (same runtime-selectable rule) reaches 13.3 billion cells/s on one core and 60.6 billion on six cores of an Apple M3 Pro, so the current FPGA design (4.3 billion cells/s) is not faster than a well-optimized CPU. The FPGA design is limited by memory bandwidth (one word in and out of BRAM per clock) while using 1.7% of the LUTs; the next step below targets that.
 
 ## Verification
 Every testbench is self-checking against a reference model written independently of the RTL, and checks the design only through its outputs:
@@ -21,7 +21,7 @@ Every testbench is self-checking against a reference model written independently
 - `tb_ca_update_engine_wide.v`: 6 lane/latency configurations x 8 rules (including random rules) against a bit-level reference
 - `tb_ca_video_core_wide.v`: the full core, checked from its output pins only (pixel positions derived from sync timing, every frame exactly one generation, UART decoded bit by bit)
 - `tb_gen_cycle_display.v`: 7-segment readout decoded from the anode/segment pins
-- `tb_nexys_a7_top_wide_perf.v`: the real board top at 640x480 with 32 lanes; the 7-segment display reads 10,612
+- `tb_nexys_a7_top_wide_perf.v`: the real board top at 640x480 with 32 lanes, at the 100, 150 and 200 MHz clock settings; the 7-segment display reads 10,613
 
 The tests were mutation-checked: deliberately broken RTL (wrong latency, off-by-one counters, an extra address cycle) is caught. Run them all with Icarus Verilog:
 
@@ -39,7 +39,7 @@ The original 1-lane design (one cell per clock, 517 LUTs, timing met at 100 MHz)
 
 ## Next steps
 - Temporal pipelining: chain engine stages so each pass through memory computes several generations, aiming to beat the 6-core CPU baseline on hardware
-- Raise the clock to 150-200 MHz (the display read address, the previous critical path, is now registered)
+- Push past 150 MHz (about 160 MHz is the current limit; the display address multiply, inside a DSP block, is now the worst path)
 - Built-in self-test: CA-based pattern generator and signature register, with fault-injection coverage measurements
 - Collect the UART-streamed GIFs for every rule
 
